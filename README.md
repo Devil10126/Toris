@@ -1,1 +1,1 @@
-# Toris
+# Toris is a powerful DDoS tool, not to be used for illegal purposes
