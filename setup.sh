@@ -1,20 +1,38 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/bin/bash
 
-echo -e "\033[1;36m[*] Starting HTTPS DDoS Tool Setup...\033[0m"
+# Update and upgrade the system
+echo "[+] Updating and upgrading system..."
+pkg update && pkg upgrade -y
 
-# Update and upgrade packages
-termux-change-repo
-pkg update -y && pkg upgrade -y
+# Install dependencies for cURL, Tor, and other tools
+echo "[+] Installing dependencies..."
+pkg install -y curl tor git clang libcurl-dev libssl-dev
 
-# Install required dependencies
-echo -e "\033[1;32m[+] Installing dependencies...\033[0m"
-pkg install -y clang libcurl curl tsocks || {
-    echo -e "\033[1;31m[!] Dependency installation failed. Retrying...\033[0m"
-    sleep 2
-    pkg install -y clang libcurl curl tsocks
-}
+# Install additional dependencies if required for compiling
+pkg install -y make build-essential
 
-# Final instructions
-echo -e "\033[1;32m[✔] Setup complete.\033[0m"
-echo -e "\033[1;34mTo compile:\033[0m clang++ DDoS_https.cpp -o DDoS_https -lcurl -lpthread"
-echo -e "\033[1;34mTo run:\033[0m ./DDoS_https"
+# Check if curl is installed
+echo "[+] Checking if curl is installed..."
+if ! command -v curl &> /dev/null
+then
+    echo "[!] curl is not installed, installing..."
+    pkg install curl
+fi
+
+# Install Tor
+echo "[+] Checking if Tor is installed..."
+if ! command -v tor &> /dev/null
+then
+    echo "[!] Tor is not installed, installing..."
+    pkg install tor
+fi
+
+# Start Tor service manually in Termux
+echo "[+] Starting Tor..."
+tor &
+
+# Configure permissions for Termux if necessary
+echo "[+] Configuring Termux environment..."
+termux-setup-storage
+
+echo "[✔] Setup completed! You can now run the DDoS tool."
